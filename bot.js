@@ -1,52 +1,87 @@
-// bot.js
-
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
-const axios = require('axios');
-const crypto = require('crypto');
-require('dotenv').config();
 
-// Thay thế bằng API token của bot và các ID nhóm của bạn
-const TOKEN = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN_HERE';
-const GROUP_IDS = [
-    '@tnambipnhatnekkk',
-    '@danhsaptaixiu001',
-    '@ZR6CcJd5OKk0NWNl'
+// Khai báo các biến môi trường từ Render
+const TOKEN = process.env.BOT_TOKEN;
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
+
+// Các username nhóm của bạn
+const GROUP_USERNAMES = [
+    'tnambipnhatnekkk',
+    'danhsaptaixiu001',
+    'ZR6CcJd5OKk0NWNl'
 ];
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+// Cấu hình bot ở chế độ webhook
+const bot = new TelegramBot(TOKEN);
+
+// --- Cấu hình web server để xử lý webhook ---
+const app = express();
+app.use(express.json());
+
+// Đường dẫn webhook mà Telegram sẽ gửi dữ liệu đến
+app.post(`/bot${TOKEN}`, (req, res) => {
+    bot.processUpdate(req.body);
+    res.sendStatus(200);
+});
+
+// Thiết lập webhook cho bot
+async function setWebhook() {
+    try {
+        const result = await bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`);
+        console.log(`Webhook đã được thiết lập thành công: ${result}`);
+    } catch (error) {
+        console.error('Lỗi khi thiết lập webhook:', error.message);
+    }
+}
+setWebhook();
+
+// Đường dẫn mặc định
+app.get('/', (req, res) => {
+    res.send('Bot Telegram đang hoạt động!');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server đang chạy trên cổng ${PORT}`);
+});
 
 // --- Lệnh /start ---
 bot.onText(/\/start/, async (msg) => {
     const userId = msg.from.id;
     const chatId = msg.chat.id;
 
-    // Kiểm tra xem người dùng đã là thành viên của các nhóm chưa
     const isMember = await checkUserMembership(userId);
 
     if (isMember) {
         bot.sendMessage(chatId, `Xin chào ${msg.from.first_name}! Chào mừng trở lại.\nBạn đã là thành viên của các nhóm. Bây giờ bạn có thể gửi mã MD5 để dự đoán Tài Xỉu.`);
     } else {
-        const welcomeMessage = `Chào mừng ${msg.from.first_name}!\nĐể sử dụng bot, bạn phải tham gia các nhóm sau:\n- ${GROUP_IDS.join('\n- ')}\n\nSau khi tham gia, hãy bấm /start lại để xác nhận.`;
-        bot.sendMessage(chatId, welcomeMessage);
+        const groupLinks = GROUP_USERNAMES.map(username => `@${username}`).join('\n- ');
+        const welcomeMessage = `Chào mừng ${msg.from.first_name}!\nĐể sử dụng bot, bạn phải tham gia các nhóm sau:\n- ${groupLinks}\n\nSau khi tham gia, hãy bấm nút "Xác nhận" bên dưới.`;
+        
+        // Thêm nút "Xác nhận"
+        const keyboard = {
+            inline_keyboard: [
+                [{ text: '✅ Xác nhận', callback_data: 'confirm_membership' }]
+            ]
+        };
+
+        bot.sendMessage(chatId, welcomeMessage, { reply_markup: keyboard });
     }
 });
 
 // --- Hàm kiểm tra thành viên của nhóm ---
 async function checkUserMembership(userId) {
     try {
-        // Lưu ý: TelegramBot API có hàm getChatMember, nhưng để đảm bảo các nhóm private
-        // chúng ta có thể sử dụng một cách khác nếu cần.
-        // Với các nhóm public, code này hoạt động tốt.
-        for (const groupId of GROUP_IDS) {
-            const member = await bot.getChatMember(groupId, userId);
-            if (member && (member.status === 'member' || member.status === 'administrator' || member.status === 'creator')) {
+        for (const username of GROUP_USERNAMES) {
+            const member = await bot.getChatMember(`@${username}`, userId);
+            if (member.status !== 'left' && member.status !== 'kicked') {
                 return true;
             }
         }
         return false;
     } catch (error) {
-        console.error('Lỗi khi kiểm tra thành viên:', error.message);
+        console.error(`Lỗi khi kiểm tra thành viên: ${error.message}`);
         return false;
     }
 }
@@ -57,23 +92,20 @@ bot.on('message', async (msg) => {
     const userId = msg.from.id;
     const text = msg.text;
 
-    // Bỏ qua các lệnh
     if (text.startsWith('/')) {
         return;
     }
-
-    // Kiểm tra xác nhận trước khi xử lý MD5
+    
     const isMember = await checkUserMembership(userId);
     if (!isMember) {
-        return bot.sendMessage(chatId, 'Bạn chưa được xác nhận. Vui lòng tham gia các nhóm yêu cầu và bấm /start lại.');
+        return bot.sendMessage(chatId, 'Bạn chưa được xác nhận. Vui lòng tham gia các nhóm yêu cầu và bấm /start lại hoặc nút "Xác nhận".');
     }
-
+    
     const md5Regex = /^[0-9a-fA-F]{32}$/;
 
     if (md5Regex.test(text.trim())) {
         const md5Hash = text.trim();
 
-        // Thuật toán dự đoán (ví dụ)
         const lastFour = md5Hash.substring(md5Hash.length - 4);
         let sumOfHex = 0;
         for (const char of lastFour) {
@@ -81,29 +113,31 @@ bot.on('message', async (msg) => {
         }
 
         const prediction = sumOfHex % 2 === 0 ? "Tài" : "Xỉu";
-        const confidence = "90%"; // Bạn có thể tùy chỉnh độ tin cậy
+        const confidence = "90%"; 
 
         const replyMessage = `MD5: ${md5Hash}\nDự đoán: ${prediction}\nĐộ tin cậy: ${confidence}`;
         bot.sendMessage(chatId, replyMessage);
+
     } else {
-        // Tránh spam
-        if (text.length > 5 && !text.startsWith('/')) {
+        if (text.length > 5) {
             bot.sendMessage(chatId, 'Mã MD5 không hợp lệ. Vui lòng gửi một chuỗi 32 ký tự MD5.');
         }
     }
 });
 
-console.log('Bot đang chạy...');
+// --- Xử lý sự kiện khi người dùng bấm nút ---
+bot.on('callback_query', async (callbackQuery) => {
+    const msg = callbackQuery.message;
+    const data = callbackQuery.data;
+    const userId = callbackQuery.from.id;
 
-// --- Triển khai trên Render.com hoặc các dịch vụ tương tự (sử dụng webhooks) ---
-// Đây là cách để bot không bị tắt. Bạn có thể bỏ qua phần này nếu chỉ chạy bot trên máy tính cá nhân.
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get('/', (req, res) => {
-    res.send('Bot đang hoạt động!');
-});
-
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    if (data === 'confirm_membership') {
+        const isMember = await checkUserMembership(userId);
+        
+        if (isMember) {
+            bot.sendMessage(msg.chat.id, `Xác nhận thành công! Bạn đã tham gia đủ các nhóm. Bây giờ bạn có thể sử dụng bot.`);
+        } else {
+            bot.sendMessage(msg.chat.id, `Bạn vẫn chưa tham gia đủ các nhóm. Vui lòng kiểm tra lại.`);
+        }
+    }
 });
