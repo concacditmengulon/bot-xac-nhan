@@ -1,8 +1,11 @@
+// bot.js
+
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 
-// Khai báo các biến môi trường từ Render
-const TOKEN = process.env.BOT_TOKEN;
+// Khai báo các biến môi trường
+// LƯU Ý: Bạn vẫn cần thiết lập biến WEBHOOK_URL trong cài đặt của Render
+const TOKEN = '8326780116:AAGF1HEe4lpvUexiDvUNmY1vKWqW2ARBcK0';
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
 // Các username nhóm của bạn
