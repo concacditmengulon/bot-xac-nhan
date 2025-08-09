@@ -1,146 +1,104 @@
-// bot.js
+const { Telegraf, Markup } = require('telegraf');
+const crypto = require('crypto');
 
-const TelegramBot = require('node-telegram-bot-api');
-const express = require('express');
+// Token bot Telegram
+const BOT_TOKEN = '8326780116:AAGF1HEe4lpvUexiDvUNmY1vKWqW2ARBcK0';
 
-// Khai báo các biến môi trường
-// LƯU Ý: Bạn vẫn cần thiết lập biến WEBHOOK_URL trong cài đặt của Render
-const TOKEN = '8326780116:AAGF1HEe4lpvUexiDvUNmY1vKWqW2ARBcK0';
-const WEBHOOK_URL = process.env.WEBHOOK_URL;
-
-// Các username nhóm của bạn
-const GROUP_USERNAMES = [
-    'tnambipnhatnekkk',
-    'danhsaptaixiu001',
-    'ZR6CcJd5OKk0NWNl'
+// Danh sách nhóm cần tham gia
+const REQUIRED_GROUPS = [
+  '@vannhatshare',
+  '@tapdoanvannhat_itachi'
 ];
 
-// Cấu hình bot ở chế độ webhook
-const bot = new TelegramBot(TOKEN);
+const bot = new Telegraf(BOT_TOKEN);
 
-// --- Cấu hình web server để xử lý webhook ---
-const app = express();
-app.use(express.json());
-
-// Đường dẫn webhook mà Telegram sẽ gửi dữ liệu đến
-app.post(`/bot${TOKEN}`, (req, res) => {
-    bot.processUpdate(req.body);
-    res.sendStatus(200);
-});
-
-// Thiết lập webhook cho bot
-async function setWebhook() {
-    try {
-        const result = await bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`);
-        console.log(`Webhook đã được thiết lập thành công: ${result}`);
-    } catch (error) {
-        console.error('Lỗi khi thiết lập webhook:', error.message);
-    }
-}
-setWebhook();
-
-// Đường dẫn mặc định
-app.get('/', (req, res) => {
-    res.send('Bot Telegram đang hoạt động!');
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server đang chạy trên cổng ${PORT}`);
-});
-
-// --- Lệnh /start ---
-bot.onText(/\/start/, async (msg) => {
-    const userId = msg.from.id;
-    const chatId = msg.chat.id;
-
-    const isMember = await checkUserMembership(userId);
-
-    if (isMember) {
-        bot.sendMessage(chatId, `Xin chào ${msg.from.first_name}! Chào mừng trở lại.\nBạn đã là thành viên của các nhóm. Bây giờ bạn có thể gửi mã MD5 để dự đoán Tài Xỉu.`);
-    } else {
-        const groupLinks = GROUP_USERNAMES.map(username => `@${username}`).join('\n- ');
-        const welcomeMessage = `Chào mừng ${msg.from.first_name}!\nĐể sử dụng bot, bạn phải tham gia các nhóm sau:\n- ${groupLinks}\n\nSau khi tham gia, hãy bấm nút "Xác nhận" bên dưới.`;
-        
-        // Thêm nút "Xác nhận"
-        const keyboard = {
-            inline_keyboard: [
-                [{ text: '✅ Xác nhận', callback_data: 'confirm_membership' }]
-            ]
-        };
-
-        bot.sendMessage(chatId, welcomeMessage, { reply_markup: keyboard });
-    }
-});
-
-// --- Hàm kiểm tra thành viên của nhóm ---
-async function checkUserMembership(userId) {
-    try {
-        for (const username of GROUP_USERNAMES) {
-            const member = await bot.getChatMember(`@${username}`, userId);
-            if (member.status !== 'left' && member.status !== 'kicked') {
-                return true;
-            }
-        }
-        return false;
-    } catch (error) {
-        console.error(`Lỗi khi kiểm tra thành viên: ${error.message}`);
-        return false;
-    }
+// Hàm kiểm tra thành viên
+async function isMemberOfGroup(ctx, groupRef, userId) {
+  try {
+    const res = await ctx.telegram.getChatMember(groupRef, userId);
+    return ['creator', 'administrator', 'member', 'restricted'].includes(res.status);
+  } catch {
+    return false;
+  }
 }
 
-// --- Xử lý tin nhắn MD5 ---
-bot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const text = msg.text;
+// Lệnh /start
+bot.start((ctx) => {
+  const welcome = `Chào ${ctx.from.first_name || ctx.from.username || 'bạn'}!\n
+Bạn cần tham gia đủ các nhóm sau để dùng tool phân tích MD5:\n${REQUIRED_GROUPS.join('\n')}\n\nBấm "Xác nhận" để kiểm tra.`;
+  ctx.reply(welcome, Markup.inlineKeyboard([
+    Markup.button.callback('✅ Xác nhận', 'CHECK_MEMBERSHIP')
+  ]));
+});
 
-    if (text.startsWith('/')) {
-        return;
-    }
-    
-    const isMember = await checkUserMembership(userId);
+// Xử lý nút Xác nhận
+bot.action('CHECK_MEMBERSHIP', async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from.id;
+  const notMember = [];
+
+  for (const g of REQUIRED_GROUPS) {
+    const isMember = await isMemberOfGroup(ctx, g, userId);
+    if (!isMember) notMember.push(g);
+  }
+
+  if (notMember.length > 0) {
+    let text = '❌ Bạn chưa vào đủ các nhóm:\n';
+    notMember.forEach(g => text += `• ${g}\n`);
+    text += '\nVui lòng tham gia rồi bấm lại "Xác nhận".';
+    return ctx.reply(text);
+  }
+
+  ctx.reply('✅ Bạn đã vào đủ nhóm. Gõ /help để xem cách dùng tool.');
+});
+
+// Lệnh /help
+bot.command('help', (ctx) => {
+  ctx.reply(`
+Cách dùng tool:
+- /analyze <md5> [mode]
+  mode = deterministic | random (mặc định deterministic)
+Ví dụ:
+  /analyze d41d8cd98f00b204e9800998ecf8427e
+`);
+});
+
+// Lệnh /analyze
+bot.command('analyze', async (ctx) => {
+  const userId = ctx.from.id;
+  for (const g of REQUIRED_GROUPS) {
+    const isMember = await isMemberOfGroup(ctx, g, userId);
     if (!isMember) {
-        return bot.sendMessage(chatId, 'Bạn chưa được xác nhận. Vui lòng tham gia các nhóm yêu cầu và bấm /start lại hoặc nút "Xác nhận".');
+      return ctx.reply(`❌ Bạn không còn là thành viên của ${g}.`);
     }
-    
-    const md5Regex = /^[0-9a-fA-F]{32}$/;
+  }
 
-    if (md5Regex.test(text.trim())) {
-        const md5Hash = text.trim();
+  const parts = ctx.message.text.split(/\s+/);
+  if (parts.length < 2) return ctx.reply('Vui lòng gửi MD5: /analyze <md5> [mode]');
+  const md5 = parts[1].toLowerCase();
+  const mode = (parts[2] || 'deterministic').toLowerCase();
 
-        const lastFour = md5Hash.substring(md5Hash.length - 4);
-        let sumOfHex = 0;
-        for (const char of lastFour) {
-            sumOfHex += parseInt(char, 16);
-        }
+  if (!/^[0-9a-f]{32}$/.test(md5)) {
+    return ctx.reply('❌ MD5 không hợp lệ.');
+  }
 
-        const prediction = sumOfHex % 2 === 0 ? "Tài" : "Xỉu";
-        const confidence = "90%"; 
+  let result;
+  if (mode === 'random') {
+    result = (Math.random() < 0.5) ? 'TÀI' : 'XỈU';
+  } else {
+    const buf = Buffer.from(md5, 'hex');
+    let sum = 0;
+    for (const b of buf) sum += b;
+    result = (sum % 2 === 0) ? 'XỈU' : 'TÀI';
+  }
 
-        const replyMessage = `MD5: ${md5Hash}\nDự đoán: ${prediction}\nĐộ tin cậy: ${confidence}`;
-        bot.sendMessage(chatId, replyMessage);
-
-    } else {
-        if (text.length > 5) {
-            bot.sendMessage(chatId, 'Mã MD5 không hợp lệ. Vui lòng gửi một chuỗi 32 ký tự MD5.');
-        }
-    }
+  ctx.reply(`🔍 MD5: ${md5}\n➡️ Dự đoán: ${result}`);
 });
 
-// --- Xử lý sự kiện khi người dùng bấm nút ---
-bot.on('callback_query', async (callbackQuery) => {
-    const msg = callbackQuery.message;
-    const data = callbackQuery.data;
-    const userId = callbackQuery.from.id;
-
-    if (data === 'confirm_membership') {
-        const isMember = await checkUserMembership(userId);
-        
-        if (isMember) {
-            bot.sendMessage(msg.chat.id, `Xác nhận thành công! Bạn đã tham gia đủ các nhóm. Bây giờ bạn có thể sử dụng bot.`);
-        } else {
-            bot.sendMessage(msg.chat.id, `Bạn vẫn chưa tham gia đủ các nhóm. Vui lòng kiểm tra lại.`);
-        }
-    }
+// Chạy bot
+bot.launch().then(() => {
+  console.log('Bot đã chạy.');
 });
+
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
